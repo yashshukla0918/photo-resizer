@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Photo Tool</title>
+
+<script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<link href="https://cdnjs.cloudflare.com/ajax/libs/cropperjs/1.6.1/cropper.min.css" rel="stylesheet"/>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/cropperjs/1.6.1/cropper.min.js"></script>
+
+<style>
+body { font-family: Arial; margin:0; background:#f4f4f4; }
+header { padding:12px; text-align:center; background:#222; color:#fff; }
+.container { padding:10px; max-width:900px; margin:auto; }
+.upload { border:2px dashed #aaa; padding:15px; text-align:center; margin-bottom:10px; background:#fff; }
+.image-card { background:#fff; padding:10px; margin-bottom:12px; border-radius:10px; }
+.preview-box { height:250px; overflow:hidden; display:flex; align-items:center; justify-content:center; }
+.preview-box img { max-height:100%; max-width:100%; }
+.controls { display:flex; flex-wrap:wrap; gap:8px; margin-top:10px; }
+.controls select, .controls input { padding:6px; }
+button { padding:8px 10px; border:none; background:#007bff; color:#fff; border-radius:6px; cursor:pointer; }
+button.secondary { background:#555; }
+@media (max-width:600px) {
+  .preview-box { height:180px; }
+  .controls { flex-direction:column; }
+}
+</style>
+</head>
+<body>
+<header><h3>Photo Compressor & Cropper</h3></header>
+
+<div class="container">
+
+<div class="upload">
+<input type="file" id="fileInput" multiple accept="image/*">
+</div>
+
+<div id="imageList"></div>
+<button id="downloadZip">Download All (ZIP)</button>
+<button id="downloadAllPdf" class="secondary">Download All as PDF</button>
+
+</div>
+
+<script>
+const { jsPDF } = window.jspdf;
+let cropperMap = {};
+
+$('#fileInput').on('change', function(e) {
+    for (let file of e.target.files) {
+        const reader = new FileReader();
+        reader.onload = e => addImage(e.target.result);
+        reader.readAsDataURL(file);
+    }
+});
+
+function addImage(src) {
+    const id = Date.now() + Math.random();
+
+    $('#imageList').append(`
+    <div class="image-card" data-id="${id}">
+        <div class="preview-box">
+            <img src="${src}" id="img_${id}">
+        </div>
+        <div class="controls">
+            <select class="ratio">
+                <option value="NaN">Free</option>
+                <option value="1">1:1</option>
+                <option value="1.777">16:9</option>
+                <option value="0.5625">9:16</option>
+                <option value="4">4:1</option>
+            </select>
+            <input type="number" class="targetSize" placeholder="Size (KB)" />
+            <button class="startCrop">Start Crop</button>
+            <button class="applyCrop">Apply Crop</button>
+            <button class="compress">Compress</button>
+            <button class="download">Download</button>
+            <button class="downloadPdf">PDF</button>
+        </div>
+    </div>`);
+}
+
+$(document).on('click', '.startCrop', function() {
+    const card = $(this).closest('.image-card');
+    const id = card.data('id');
+    const img = document.getElementById('img_' + id);
+
+    if (cropperMap[id]) {
+        cropperMap[id].destroy();
+        cropperMap[id] = null;
+    }
+
+    const ratioVal = card.find('.ratio').val();
+    const ratio = ratioVal === "NaN" ? NaN : parseFloat(ratioVal);
+
+    if (!img.complete) {
+        img.onload = () => initCropper(img, id, ratio);
+    } else {
+        initCropper(img, id, ratio);
+    }
+});
+
+function initCropper(img, id, ratio) {
+    cropperMap[id] = new Cropper(img, {
+        aspectRatio: isNaN(ratio) ? NaN : ratio,
+        viewMode: 1,
+        autoCropArea: 1
+    });
+}
+
+$(document).on('click', '.applyCrop', function() {
+    const card = $(this).closest('.image-card');
+    const id = card.data('id');
+    const cropper = cropperMap[id];
+
+    if (!cropper) return alert('Click "Start Crop" first');
+
+    const canvas = cropper.getCroppedCanvas();
+    const newData = canvas.toDataURL('image/jpeg', 0.9);
+
+    const img = document.getElementById('img_' + id);
+    img.src = newData;
+
+    cropper.destroy();
+    cropperMap[id] = null;
+});
+
+$(document).on('click', '.compress', function() {
+    const card = $(this).closest('.image-card');
+    const img = card.find('img')[0];
+    const targetKB = parseFloat(card.find('.targetSize').val());
+
+    if (!targetKB) return alert('Enter size in KB');
+
+    let quality = 0.9;
+    let canvas = document.createElement('canvas');
+    let ctx = canvas.getContext('2d');
+    canvas.width = img.naturalWidth;
+    canvas.height = img.naturalHeight;
+    ctx.drawImage(img, 0, 0);
+
+    let dataUrl;
+
+    for (let i = 0; i < 12; i++) {
+        dataUrl = canvas.toDataURL('image/jpeg', quality);
+        let sizeKB = Math.round((dataUrl.length * 3) / 4 / 1024);
+
+        if (sizeKB <= targetKB) break;
+        quality -= 0.07;
+        if (quality <= 0.1) break;
+    }
+
+    img.src = dataUrl;
+});
+
+$(document).on('click', '.download', function() {
+    const img = $(this).closest('.image-card').find('img')[0];
+    const a = document.createElement('a');
+    a.href = img.src;
+    a.download = 'image.jpg';
+    a.click();
+});
+
+// Single image PDF
+$(document).on('click', '.downloadPdf', function() {
+    const img = $(this).closest('.image-card').find('img')[0];
+
+    const pdf = new jsPDF();
+    const image = new Image();
+    image.src = img.src;
+
+    image.onload = function() {
+        const width = pdf.internal.pageSize.getWidth();
+        const height = (image.height * width) / image.width;
+        pdf.addImage(image, 'JPEG', 0, 0, width, height);
+        pdf.save('image.pdf');
+    };
+});
+
+// All images PDF
+$('#downloadAllPdf').on('click', function() {
+    const pdf = new jsPDF();
+    let first = true;
+
+    $('#imageList img').each(function(i, img) {
+        if (!first) pdf.addPage();
+        first = false;
+
+        const width = pdf.internal.pageSize.getWidth();
+        const height = (img.naturalHeight * width) / img.naturalWidth;
+        pdf.addImage(img.src, 'JPEG', 0, 0, width, height);
+    });
+
+    pdf.save('all-images.pdf');
+});
+
+$('#downloadZip').on('click', function() {
+    const zip = new JSZip();
+
+    $('#imageList img').each(function(i, img) {
+        const base64 = img.src.split(',')[1];
+        zip.file(`image_${i}.jpg`, base64, { base64: true });
+    });
+
+    zip.generateAsync({ type: 'blob' }).then(blob => {
+        saveAs(blob, 'images.zip');
+    });
+});
+</script>
+
+</body>
+</html>
